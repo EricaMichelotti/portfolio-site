@@ -23,6 +23,9 @@ export const profile = {
   shortName: "Erica",
   role: "Full-stack & Game Developer",
   headline: "Software, built with care.",
+  avatar: "https://avatars.githubusercontent.com/u/84628281?v=4&s=96",
+  /** Cycled in the hero: "I build <word>" */
+  builds: ["web apps.", "APIs.", "games.", "dev tools."],
   intro:
     "Full-stack and game developer with 5+ years of experience shipping web apps, desktop tools, APIs and games — from the first sketch to production.",
   about:
