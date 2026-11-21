@@ -1,32 +1,87 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react"
 import { useInView, useReducedMotion } from "motion/react"
+
+import { cn } from "@/lib/utils"
 
 type Star = { x: number; y: number; z: number }
 type Enemy = { x: number; y: number; vx: number; vy: number; r: number; hue: number }
 type Bullet = { x: number; y: number }
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; hue: number }
 
+export type GameMode = "auto" | "player"
+
+/** Seconds without input before the autopilot takes back over. */
+const IDLE_TIMEOUT = 2.5
+const KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s"])
+
 /**
- * A tiny self-playing top-down shooter rendered on a canvas.
+ * A tiny top-down shooter on a canvas. It flies itself until someone points at it:
+ * then the ship follows the mouse (or finger, or arrow keys) and enemies can hit you.
  * Pauses when off-screen and renders a single still frame for reduced motion.
  */
-export function MiniGame({ className }: { className?: string }) {
+export function MiniGame({
+  className,
+  onModeChange,
+}: {
+  className?: string
+  onModeChange?: (mode: GameMode) => void
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const inView = useInView(canvasRef, { margin: "100px" })
   const reduceMotion = useReducedMotion()
+  const [mode, setMode] = useState<GameMode>("auto")
   const state = useRef({
     stars: [] as Star[],
     enemies: [] as Enemy[],
     bullets: [] as Bullet[],
     particles: [] as Particle[],
-    ship: { x: 0.5, target: 0.5 },
+    ship: { x: 0.5, y: 0.85, targetX: 0.5, targetY: 0.85 },
+    mode: "auto" as GameMode,
+    idle: 0,
+    keys: new Set<string>(),
+    invulnerable: 0,
+    flash: 0,
     score: 0,
+    best: 0,
     spawnIn: 0,
     fireIn: 0,
     time: 0,
     width: 0,
     height: 0,
   })
+
+  const changeMode = (next: GameMode) => {
+    const s = state.current
+    if (s.mode === next) return
+    s.mode = next
+    if (next === "player") {
+      s.score = 0
+      s.invulnerable = 1
+    }
+    setMode(next)
+    onModeChange?.(next)
+  }
+
+  const steer = (event: PointerEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const s = state.current
+    s.ship.targetX = (event.clientX - rect.left) / rect.width
+    s.ship.targetY = (event.clientY - rect.top) / rect.height
+    s.idle = 0
+    changeMode("player")
+  }
+
+  const onKeyDown = (event: KeyboardEvent<HTMLCanvasElement>) => {
+    if (!KEYS.has(event.key)) return
+    event.preventDefault()
+    state.current.keys.add(event.key)
+    state.current.idle = 0
+    changeMode("player")
+  }
+
+  const onKeyUp = (event: KeyboardEvent<HTMLCanvasElement>) => {
+    state.current.keys.delete(event.key)
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -55,10 +110,10 @@ export function MiniGame({ className }: { className?: string }) {
     const observer = new ResizeObserver(resize)
     observer.observe(canvas)
 
-    const explode = (x: number, y: number, hue: number) => {
-      for (let i = 0; i < 14; i++) {
+    const explode = (x: number, y: number, hue: number, count = 14) => {
+      for (let i = 0; i < count; i++) {
         const angle = Math.random() * Math.PI * 2
-        const speed = 40 + Math.random() * 120
+        const speed = 40 + Math.random() * 140
         s.particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, hue })
       }
     }
@@ -66,6 +121,13 @@ export function MiniGame({ className }: { className?: string }) {
     const update = (dt: number) => {
       const { width: w, height: h } = s
       s.time += dt
+      s.invulnerable = Math.max(0, s.invulnerable - dt)
+      s.flash = Math.max(0, s.flash - dt * 2)
+
+      if (s.mode === "player") {
+        s.idle += dt
+        if (s.idle > IDLE_TIMEOUT) changeMode("auto")
+      }
 
       for (const star of s.stars) {
         star.y += star.z * dt * 0.25
@@ -75,29 +137,50 @@ export function MiniGame({ className }: { className?: string }) {
         }
       }
 
+      // Enemies come a little faster as your score climbs.
+      const pressure = s.mode === "player" ? Math.min(0.35, s.score / 20000) : 0
       s.spawnIn -= dt
       if (s.spawnIn <= 0) {
-        s.spawnIn = 0.55 + Math.random() * 0.5
+        s.spawnIn = 0.55 - pressure + Math.random() * 0.5
         s.enemies.push({
           x: 20 + Math.random() * (w - 40),
           y: -20,
           vx: (Math.random() - 0.5) * 40,
-          vy: 45 + Math.random() * 35,
+          vy: 45 + Math.random() * 35 + pressure * 120,
           r: 7 + Math.random() * 5,
           hue: [330, 280, 25, 190][Math.floor(Math.random() * 4)],
         })
       }
 
-      // Autopilot: chase the lowest enemy, with a gentle weave.
-      const target = s.enemies.reduce<Enemy | null>((best, e) => (!best || e.y > best.y ? e : best), null)
-      s.ship.target = target ? target.x / w : 0.5 + Math.sin(s.time * 0.8) * 0.25
-      s.ship.x += (s.ship.target - s.ship.x) * Math.min(1, dt * 3)
+      if (s.mode === "auto") {
+        // Autopilot: chase the lowest enemy, with a gentle weave.
+        const target = s.enemies.reduce<Enemy | null>((best, e) => (!best || e.y > best.y ? e : best), null)
+        s.ship.targetX = target ? target.x / w : 0.5 + Math.sin(s.time * 0.8) * 0.25
+        s.ship.targetY = 0.85
+      } else if (s.keys.size > 0) {
+        const k = s.keys
+        const speed = 0.9 * dt
+        if (k.has("ArrowLeft") || k.has("a")) s.ship.targetX = s.ship.x - speed * 4
+        if (k.has("ArrowRight") || k.has("d")) s.ship.targetX = s.ship.x + speed * 4
+        if (k.has("ArrowUp") || k.has("w")) s.ship.targetY = s.ship.y - speed * 4
+        if (k.has("ArrowDown") || k.has("s")) s.ship.targetY = s.ship.y + speed * 4
+        s.idle = 0
+      }
+
+      const minX = 16 / w
+      const minY = 0.3
+      const maxY = (h - 20) / h
+      s.ship.targetX = Math.min(1 - minX, Math.max(minX, s.ship.targetX))
+      s.ship.targetY = Math.min(maxY, Math.max(minY, s.ship.targetY))
+      const follow = Math.min(1, dt * (s.mode === "player" ? 14 : 3))
+      s.ship.x += (s.ship.targetX - s.ship.x) * follow
+      s.ship.y += (s.ship.targetY - s.ship.y) * follow
       const shipX = s.ship.x * w
-      const shipY = h - 34
+      const shipY = s.ship.y * h
 
       s.fireIn -= dt
       if (s.fireIn <= 0) {
-        s.fireIn = 0.22
+        s.fireIn = s.mode === "player" ? 0.16 : 0.22
         s.bullets.push({ x: shipX, y: shipY - 14 })
       }
 
@@ -116,6 +199,16 @@ export function MiniGame({ className }: { className?: string }) {
           s.bullets.splice(hit, 1)
           explode(e.x, e.y, e.hue)
           s.score += 100
+          if (s.mode === "player") s.best = Math.max(s.best, s.score)
+          return false
+        }
+        // Only a human pilot can crash.
+        if (s.mode === "player" && s.invulnerable === 0 && Math.hypot(shipX - e.x, shipY - e.y) < e.r + 10) {
+          explode(e.x, e.y, e.hue)
+          explode(shipX, shipY, 215, 28)
+          s.score = 0
+          s.invulnerable = 1.5
+          s.flash = 1
           return false
         }
         return e.y < h + 20
@@ -138,6 +231,11 @@ export function MiniGame({ className }: { className?: string }) {
       bg.addColorStop(1, "#0b1030")
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, w, h)
+
+      if (s.flash > 0) {
+        ctx.fillStyle = `rgba(244,63,94,${s.flash * 0.25})`
+        ctx.fillRect(0, 0, w, h)
+      }
 
       for (const star of s.stars) {
         ctx.fillStyle = `rgba(255,255,255,${star.z * 0.8})`
@@ -173,41 +271,50 @@ export function MiniGame({ className }: { className?: string }) {
       }
       ctx.globalAlpha = 1
 
-      const x = s.ship.x * w
-      const y = h - 34
-      const tilt = (s.ship.target - s.ship.x) * 2
-      ctx.save()
-      ctx.translate(x, y)
-      ctx.rotate(Math.max(-0.35, Math.min(0.35, tilt)))
-      const hull = ctx.createLinearGradient(0, -16, 0, 14)
-      hull.addColorStop(0, "#60a5fa")
-      hull.addColorStop(1, "#2563eb")
-      ctx.shadowColor = "#3b82f6"
-      ctx.shadowBlur = 18
-      ctx.fillStyle = hull
-      ctx.beginPath()
-      ctx.moveTo(0, -16)
-      ctx.lineTo(12, 12)
-      ctx.lineTo(0, 6)
-      ctx.lineTo(-12, 12)
-      ctx.closePath()
-      ctx.fill()
-      ctx.shadowBlur = 0
-      ctx.fillStyle = `rgba(251,146,60,${0.6 + Math.sin(s.time * 40) * 0.3})`
-      ctx.beginPath()
-      ctx.moveTo(-4, 9)
-      ctx.lineTo(0, 18 + Math.random() * 5)
-      ctx.lineTo(4, 9)
-      ctx.closePath()
-      ctx.fill()
-      ctx.restore()
+      // Blink while invulnerable after a crash.
+      const visible = s.invulnerable === 0 || s.mode === "auto" || Math.floor(s.time * 12) % 2 === 0
+      if (visible) {
+        const x = s.ship.x * w
+        const y = s.ship.y * h
+        const tilt = (s.ship.targetX - s.ship.x) * 2
+        ctx.save()
+        ctx.translate(x, y)
+        ctx.rotate(Math.max(-0.35, Math.min(0.35, tilt)))
+        const hull = ctx.createLinearGradient(0, -16, 0, 14)
+        hull.addColorStop(0, "#60a5fa")
+        hull.addColorStop(1, "#2563eb")
+        ctx.shadowColor = "#3b82f6"
+        ctx.shadowBlur = 18
+        ctx.fillStyle = hull
+        ctx.beginPath()
+        ctx.moveTo(0, -16)
+        ctx.lineTo(12, 12)
+        ctx.lineTo(0, 6)
+        ctx.lineTo(-12, 12)
+        ctx.closePath()
+        ctx.fill()
+        ctx.shadowBlur = 0
+        ctx.fillStyle = `rgba(251,146,60,${0.6 + Math.sin(s.time * 40) * 0.3})`
+        ctx.beginPath()
+        ctx.moveTo(-4, 9)
+        ctx.lineTo(0, 18 + Math.random() * 5)
+        ctx.lineTo(4, 9)
+        ctx.closePath()
+        ctx.fill()
+        ctx.restore()
+      }
       ctx.shadowBlur = 0
 
-      ctx.fillStyle = "rgba(255,255,255,0.85)"
       ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+      ctx.fillStyle = "rgba(255,255,255,0.85)"
       ctx.fillText(`SCORE ${String(s.score).padStart(6, "0")}`, 14, 22)
-      ctx.fillStyle = "rgba(255,255,255,0.45)"
-      ctx.fillText("AUTOPILOT", w - 80, 22)
+      if (s.best > 0) {
+        ctx.fillStyle = "rgba(255,255,255,0.45)"
+        ctx.fillText(`BEST ${String(s.best).padStart(6, "0")}`, 14, 38)
+      }
+      const label = s.mode === "player" ? "PLAYER 1" : "AUTOPILOT"
+      ctx.fillStyle = s.mode === "player" ? "rgba(74,222,128,0.9)" : "rgba(255,255,255,0.45)"
+      ctx.fillText(label, w - ctx.measureText(label).width - 14, 22)
     }
 
     if (reduceMotion || !inView) {
@@ -231,7 +338,27 @@ export function MiniGame({ className }: { className?: string }) {
       cancelAnimationFrame(frame)
       observer.disconnect()
     }
+    // changeMode only touches refs and stable state setters, so it is safe to omit.
   }, [inView, reduceMotion])
 
-  return <canvas ref={canvasRef} className={className} aria-hidden="true" />
+  const interactive = !reduceMotion
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className={cn(
+        "touch-pan-y outline-none focus-visible:ring-3 focus-visible:ring-brand/60 focus-visible:ring-inset",
+        mode === "player" ? "cursor-none" : "cursor-crosshair",
+        className,
+      )}
+      tabIndex={interactive ? 0 : -1}
+      role="application"
+      aria-label="Mini space shooter. Move the mouse over it, drag, or use the arrow keys to fly the ship. It fires automatically."
+      onPointerMove={interactive ? steer : undefined}
+      onPointerDown={interactive ? steer : undefined}
+      onKeyDown={interactive ? onKeyDown : undefined}
+      onKeyUp={interactive ? onKeyUp : undefined}
+      onBlur={() => state.current.keys.clear()}
+    />
+  )
 }

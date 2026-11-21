@@ -11,7 +11,7 @@ import {
 import { Gamepad2 } from "lucide-react"
 
 import { CodeTyper } from "@/components/hero/code-typer"
-import { MiniGame } from "@/components/hero/mini-game"
+import { MiniGame, type GameMode } from "@/components/hero/mini-game"
 
 /** A floating editor window: code on the left, the game it drives on the right. */
 export function HeroDevice() {
@@ -19,6 +19,7 @@ export function HeroDevice() {
   const reduceMotion = useReducedMotion()
   const inView = useInView(ref, { once: true, margin: "-15% 0px" })
   const [hovering, setHovering] = useState(false)
+  const [mode, setMode] = useState<GameMode>("auto")
 
   // Lies back in perspective, then rises flat as you scroll — Apple-style.
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start end", "center center"] })
@@ -36,6 +37,12 @@ export function HeroDevice() {
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (reduceMotion || event.pointerType !== "mouse") return
+    // Hold the window still while someone is flying the ship.
+    if ((event.target as HTMLElement).closest("[data-game]")) {
+      px.set(0)
+      py.set(0)
+      return
+    }
     const rect = event.currentTarget.getBoundingClientRect()
     px.set((event.clientX - rect.left) / rect.width - 0.5)
     py.set((event.clientY - rect.top) / rect.height - 0.5)
@@ -81,11 +88,21 @@ export function HeroDevice() {
           <div className="hidden overflow-hidden border-r border-white/8 px-4 py-5 md:block">
             <CodeTyper start={inView} />
           </div>
-          <div className="relative aspect-[4/3] md:aspect-auto">
-            <MiniGame className="absolute inset-0 size-full" />
-            <div className="pointer-events-none absolute right-3 bottom-3 flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 text-[11px] text-white/80 backdrop-blur-md">
-              <Gamepad2 className="size-3.5" aria-hidden="true" />
-              Rendering live in your browser
+          <div data-game className="relative aspect-[4/3] md:aspect-auto">
+            <MiniGame className="absolute inset-0 size-full" onModeChange={setMode} />
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute right-3 bottom-3 flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 text-[11px] text-white/80 backdrop-blur-md transition-opacity duration-500 ${mode === "player" ? "opacity-0" : "opacity-100"}`}
+            >
+              <Gamepad2 className="size-3.5" />
+              {reduceMotion ? (
+                "Rendered live in your browser"
+              ) : (
+                <>
+                  <span className="hidden [@media(pointer:fine)]:inline">Move your mouse here to play</span>
+                  <span className="[@media(pointer:fine)]:hidden">Touch &amp; drag to play</span>
+                </>
+              )}
             </div>
           </div>
         </div>
