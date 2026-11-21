@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <title>Erica Michelotti — Full-stack &amp; Game Developer</title>
+    <meta
+      name="description"
+      content="Portfolio of Erica Michelotti, a full-stack and game developer with 5+ years of experience building web apps, APIs, desktop tools and games."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Erica Michelotti — Full-stack &amp; Game Developer" />
+    <meta
+      property="og:description"
+      content="Web apps, APIs, desktop tools and games — built with care."
+    />
+    <meta name="twitter:card" content="summary" />
+    <script>
+      // Apply the saved or system theme before first paint to avoid a flash.
+      try {
+        const stored = localStorage.getItem("theme")
+        const dark = stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches
+        if (dark) {
+          document.documentElement.classList.add("dark")
+          document.documentElement.style.colorScheme = "dark"
+        }
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
