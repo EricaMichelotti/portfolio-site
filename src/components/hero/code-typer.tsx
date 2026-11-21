@@ -70,7 +70,10 @@ export function CodeTyper({ start }: { start: boolean }) {
   const takes = lineLengths.map((length, i) => Math.max(0, Math.min(length, visible - offsets[i])))
   const caretLine = Math.min(
     lines.length - 1,
-    Math.max(0, offsets.findLastIndex((offset) => offset <= visible)),
+    Math.max(
+      0,
+      offsets.findLastIndex((offset) => offset <= visible),
+    ),
   )
 
   return (
